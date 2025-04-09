@@ -1,4 +1,4 @@
-from datamodel import OrderDepth, UserId, TradingState, Order
+from round1.datamodel import OrderDepth, UserId, TradingState, Order
 from typing import List
 
 
