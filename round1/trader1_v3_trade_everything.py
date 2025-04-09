@@ -169,11 +169,11 @@ PARAMS = {
         "default_edge": 1.5,
     },
     Product.SQUID_INK: {
-        "take_width": 3,
-        "clear_width": 0,
+        "take_width": 1,
+        "clear_width": 0.5,
         "prevent_adverse": True,
         "adverse_volume": 20,
-        "disregard_edge": 1,
+        "disregard_edge": 0,
         "join_edge": 2,
         "default_edge": 3,
     },
@@ -580,6 +580,7 @@ class Trader:
         }
 
         conversions = 1
+        persistentData["results"] = result
         traderData = jsonpickle.encode(persistentData)
 
         logger.flush(state, result, conversions, traderData)
@@ -589,10 +590,10 @@ class Trader:
 
 """
 Profit summary:
-Round 1 day -2: 29,026
-Round 1 day -1: 25,310
-Round 1 day 0: 18,940
-Total profit: 73,276
+Round 1 day -2: 29,686
+Round 1 day -1: 27,886
+Round 1 day 0: 24,135
+Total profit: 81,707
 
 Live: ~2.5K
 """
