@@ -153,14 +153,14 @@ class Product:
 PARAMS = {
     Product.RAINFOREST_RESIN: {
         "fair_value": 10000,
-        "take_width": 1,
+        "take_width": 0.5,
         "clear_width": 0,
         "disregard_edge": 1,  # disregards orders for joining or pennying within this value from fair
         "join_edge": 5,  # always join edge
         "default_edge": 4,
     },
     Product.KELP: {
-        "take_width": 1.5,
+        "take_width": 1,
         "clear_width": 1,
         "prevent_adverse": True,
         "adverse_volume": 20,
@@ -169,7 +169,7 @@ PARAMS = {
         "default_edge": 1.5,
     },
     Product.SQUID_INK: {
-        "take_width": 1,
+        "take_width": 2,
         "clear_width": 0.5,
         "prevent_adverse": True,
         "adverse_volume": 20,
