@@ -10,7 +10,9 @@ export function OrderDepthTableSpreadRow({ spread }: OrderDepthTableSpreadRowPro
   return (
     <Table.Tr>
       <Table.Td></Table.Td>
+      <Table.Td></Table.Td>
       <Table.Td style={{ textAlign: 'center' }}>↑ {formatNumber(spread)} ↓</Table.Td>
+      <Table.Td></Table.Td>
       <Table.Td></Table.Td>
     </Table.Tr>
   );

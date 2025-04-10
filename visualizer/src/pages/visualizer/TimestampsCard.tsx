@@ -17,7 +17,7 @@ export function TimestampsCard(): ReactNode {
 
   const timestampMin = algorithm.data[0].state.timestamp;
   const timestampMax = algorithm.data[algorithm.data.length - 1].state.timestamp;
-  const timestampStep = algorithm.data[1].state.timestamp - algorithm.data[0].state.timestamp;
+  const timestampStep = 100; //algorithm.data[1].state.timestamp - algorithm.data[0].state.timestamp;
 
   const [timestamp, setTimestamp] = useState(timestampMin);
 
@@ -48,7 +48,7 @@ export function TimestampsCard(): ReactNode {
       />
 
       {rowsByTimestamp[timestamp] ? (
-        <TimestampDetail row={rowsByTimestamp[timestamp]} />
+        <TimestampDetail row={rowsByTimestamp[timestamp]} nextRow={rowsByTimestamp[timestamp + timestampStep]} />
       ) : (
         <Text>No logs found for timestamp {formatNumber(timestamp)}</Text>
       )}

@@ -23,10 +23,12 @@ function formatTraderData(value: any): string {
 
 export interface TimestampDetailProps {
   row: AlgorithmDataRow;
+  nextRow: AlgorithmDataRow;
 }
 
 export function TimestampDetail({
   row: { state, orders, conversions, traderData, algorithmLogs, sandboxLogs },
+  nextRow: { state: nextState },
 }: TimestampDetailProps): ReactNode {
   const algorithm = useStore(state => state.algorithm)!;
 
@@ -58,7 +60,12 @@ export function TimestampDetail({
       {Object.entries(state.orderDepths).map(([symbol, orderDepth], i) => (
         <Grid.Col key={i} span={{ xs: 12, sm: 4 }}>
           <Title order={5}>{symbol} order depth</Title>
-          <OrderDepthTable orderDepth={orderDepth} ownOrders={orders[symbol] ?? []} />
+          <OrderDepthTable
+            orderDepth={orderDepth}
+            ownOrders={orders[symbol] ?? []}
+            ownTrades={(nextState.ownTrades[symbol] ?? []).filter(trade => trade.timestamp === state.timestamp)}
+            marketTrades={(nextState.marketTrades[symbol] ?? []).filter(trade => trade.timestamp === state.timestamp)}
+          />
         </Grid.Col>
       ))}
       {Object.keys(state.orderDepths).length % 3 <= 2 && <Grid.Col span={{ xs: 12, sm: 4 }} />}
