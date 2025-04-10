@@ -153,26 +153,26 @@ class Product:
 PARAMS = {
     Product.RAINFOREST_RESIN: {
         "fair_value": 10000,
-        "take_width": 1,
+        "take_width": 2,
         "clear_width": 0,
-        "disregard_edge": 1,
+        "disregard_edge": 1,  # disregards orders for joining or pennying within this value from fair
         "join_edge": 5,  # always join edge
-        "default_edge": 4,
+        "default_edge": 5,
     },
     Product.KELP: {
-        "take_width": 1.5,
-        "clear_width": 1,
+        "take_width": 2,
+        "clear_width": 0,
         "prevent_adverse": True,
-        "adverse_volume": 10,
+        "adverse_volume": 20,
         "disregard_edge": 1,
-        "join_edge": 1,
-        "default_edge": 1.5,
+        "join_edge": 2,
+        "default_edge": 2,
     },
     Product.SQUID_INK: {
         "take_width": 1,
         "clear_width": 0.5,
         "prevent_adverse": True,
-        "adverse_volume": 10,
+        "adverse_volume": 20,
         "disregard_edge": 0,
         "join_edge": 2,
         "default_edge": 3,
@@ -471,48 +471,25 @@ class Trader:
                 if abs(order_depth.sell_orders[price])
                 >= self.params[product]["adverse_volume"]
             ]
-            if len(filtered_ask) == 0:
-                filtered_ask = [price for price in order_depth.sell_orders.keys()]
             filtered_bid = [
                 price
                 for price in order_depth.buy_orders.keys()
                 if abs(order_depth.buy_orders[price])
                 >= self.params[product]["adverse_volume"]
             ]
-            if len(filtered_bid) == 0:
-                filtered_bid = [price for price in order_depth.buy_orders.keys()]
 
             # Calculate mid-price using filtered prices
             mm_ask = min(filtered_ask) if len(filtered_ask) > 0 else None
             mm_bid = max(filtered_bid) if len(filtered_bid) > 0 else None
             if mm_ask is None or mm_bid is None:
-                if len(persistentData[f"{product}_last_prices"]) == 0:
+                if persistentData.get("KELP_last_price", None) is None:
                     mmmid_price = (best_ask + best_bid) / 2
                 else:
-                    mmmid_price = persistentData[f"{product}_last_prices"][-1]
+                    mmmid_price = persistentData["KELP_last_price"]
             else:
                 mmmid_price = (mm_ask + mm_bid) / 2
 
-            # if product == Product.KELP:
-            # return mmmid_price
-
-            persistentData[f"{product}_last_prices"].append(mmmid_price)
-
-            if len(persistentData[f"{product}_last_prices"]) > 50:
-                persistentData[f"{product}_last_prices"].pop(0)
-
-            # Calculate trend from last prices
             fair_value = mmmid_price
-            if len(persistentData[f"{product}_last_prices"]) >= 5:
-                fair_value -= (
-                    (
-                        persistentData[f"{product}_last_prices"][-1]
-                        - persistentData[f"{product}_last_prices"][-5]
-                    )
-                    / 5
-                    / 2
-                )
-
         else:
             fair_value = None
 
@@ -592,10 +569,7 @@ class Trader:
         return squid_ink_take_orders + squid_ink_clear_orders + squid_ink_make_orders
 
     def run(self, state: TradingState):
-        persistentData = {
-            f"{product}_last_prices": []
-            for product in [Product.RAINFOREST_RESIN, Product.KELP, Product.SQUID_INK]
-        }
+        persistentData = {}
         if state.traderData != None and state.traderData != "":
             persistentData = jsonpickle.decode(state.traderData)
 
