@@ -1,60 +1,70 @@
 import { Table, Text } from '@mantine/core';
 import { ReactNode } from 'react';
-import { OrderDepth } from '../../models.ts';
+import { Order, OrderDepth } from '../../models.ts';
 import { getAskColor, getBidColor } from '../../utils/colors.ts';
 import { formatNumber } from '../../utils/format.ts';
 import { OrderDepthTableSpreadRow } from './OrderDepthTableSpreadRow.tsx';
 
 export interface OrderDepthTableProps {
   orderDepth: OrderDepth;
+  ownOrders: Order[];
 }
 
-export function OrderDepthTable({ orderDepth }: OrderDepthTableProps): ReactNode {
+export function OrderDepthTable({ orderDepth, ownOrders }: OrderDepthTableProps): ReactNode {
   const rows: ReactNode[] = [];
 
-  const askPrices = Object.keys(orderDepth.sellOrders)
-    .map(Number)
-    .sort((a, b) => b - a);
-  const bidPrices = Object.keys(orderDepth.buyOrders)
-    .map(Number)
-    .sort((a, b) => b - a);
-
-  for (let i = 0; i < askPrices.length; i++) {
-    const price = askPrices[i];
-
-    if (i > 0 && askPrices[i - 1] - price > 1) {
-      rows.push(<OrderDepthTableSpreadRow key={`${price}-ask-spread`} spread={askPrices[i - 1] - price} />);
+  const askTradeMap = new Map<number, number>();
+  const bidTradeMap = new Map<number, number>();
+  for (const trade of ownOrders) {
+    if (trade.quantity < 0) {
+      askTradeMap.set(trade.price, (askTradeMap.get(trade.price) ?? 0) + trade.quantity);
+    } else {
+      bidTradeMap.set(trade.price, (bidTradeMap.get(trade.price) ?? 0) + trade.quantity);
     }
+  }
+
+  const prices = [
+    ...new Set(
+      Object.keys(orderDepth.sellOrders)
+        .map(Number)
+        .concat(Object.keys(orderDepth.buyOrders).map(Number))
+        .concat(Array.from(askTradeMap.keys()))
+        .concat(Array.from(bidTradeMap.keys())),
+    ),
+  ].sort((a, b) => b - a);
+
+  for (let i = 0; i < prices.length; i++) {
+    const price = prices[i];
+
+    if (i > 0 && prices[i - 1] - price > 1) {
+      rows.push(<OrderDepthTableSpreadRow key={`${price}-ask-spread`} spread={prices[i - 1] - price} />);
+    }
+
+    const askVolume = orderDepth.sellOrders[price] ?? 0;
+    const bidVolume = orderDepth.buyOrders[price] ?? 0;
+    const askTradeVolume = askTradeMap.get(price) ?? 0;
+    const bidTradeVolume = bidTradeMap.get(price) ?? 0;
 
     rows.push(
       <Table.Tr key={`${price}-ask`}>
-        <Table.Td></Table.Td>
-        <Table.Td style={{ textAlign: 'center' }}>{formatNumber(price)}</Table.Td>
-        <Table.Td style={{ backgroundColor: getAskColor(0.1) }}>
-          {formatNumber(Math.abs(orderDepth.sellOrders[price]))}
-        </Table.Td>
-      </Table.Tr>,
-    );
-  }
-
-  if (askPrices.length > 0 && bidPrices.length > 0 && askPrices[askPrices.length - 1] !== bidPrices[0]) {
-    rows.push(<OrderDepthTableSpreadRow key="spread" spread={askPrices[askPrices.length - 1] - bidPrices[0]} />);
-  }
-
-  for (let i = 0; i < bidPrices.length; i++) {
-    const price = bidPrices[i];
-
-    if (i > 0 && bidPrices[i - 1] - price > 1) {
-      rows.push(<OrderDepthTableSpreadRow key={`${price}-bid-spread`} spread={bidPrices[i - 1] - price} />);
-    }
-
-    rows.push(
-      <Table.Tr key={`${price}-bid`}>
-        <Table.Td style={{ backgroundColor: getBidColor(0.1), textAlign: 'right' }}>
-          {formatNumber(orderDepth.buyOrders[price])}
+        <Table.Td
+          style={{
+            backgroundColor: Math.abs(bidVolume) + Math.abs(bidTradeVolume) > 0 ? getBidColor(0.1) : 'transparent',
+            textAlign: 'right',
+          }}
+        >
+          {formatNumber(bidVolume)}
+          {bidTradeVolume ? ` (+${formatNumber(bidTradeVolume)})` : ''}
         </Table.Td>
         <Table.Td style={{ textAlign: 'center' }}>{formatNumber(price)}</Table.Td>
-        <Table.Td></Table.Td>
+        <Table.Td
+          style={{
+            backgroundColor: Math.abs(askVolume) + Math.abs(askTradeVolume) > 0 ? getAskColor(0.1) : 'transparent',
+          }}
+        >
+          {formatNumber(askVolume)}
+          {askTradeVolume ? ` (${formatNumber(askTradeVolume)})` : ''}
+        </Table.Td>
       </Table.Tr>,
     );
   }

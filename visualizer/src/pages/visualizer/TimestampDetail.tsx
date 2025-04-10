@@ -58,7 +58,7 @@ export function TimestampDetail({
       {Object.entries(state.orderDepths).map(([symbol, orderDepth], i) => (
         <Grid.Col key={i} span={{ xs: 12, sm: 4 }}>
           <Title order={5}>{symbol} order depth</Title>
-          <OrderDepthTable orderDepth={orderDepth} />
+          <OrderDepthTable orderDepth={orderDepth} ownOrders={orders[symbol] ?? []} />
         </Grid.Col>
       ))}
       {Object.keys(state.orderDepths).length % 3 <= 2 && <Grid.Col span={{ xs: 12, sm: 4 }} />}
