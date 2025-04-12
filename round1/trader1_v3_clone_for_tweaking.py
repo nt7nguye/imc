@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 import pdb
 from datamodel import (
     Listing,
@@ -9,7 +10,7 @@ from datamodel import (
     Trade,
     TradingState,
 )
-from typing import List, Any
+from typing import List, Any, Optional
 import string
 import jsonpickle
 import json
@@ -155,6 +156,7 @@ PARAMS = {
         "fair_value": 10000,
         "take_width": 0.5,
         "clear_width": 0,
+        "adverse_volume": 10,
         "disregard_edge": 1,  # disregards orders for joining or pennying within this value from fair
         "join_edge": 5,  # always join edge
         "default_edge": 4,
@@ -178,6 +180,21 @@ PARAMS = {
         "default_edge": 3,
     },
 }
+
+
+@dataclass
+class Microstructure:
+    best_ask: Optional[int] = None
+    best_bid: Optional[int] = None
+
+    filtered_best_ask: Optional[int] = None
+    filtered_best_bid: Optional[int] = None
+
+    fair_value: Optional[float] = (
+        None  # Fair value can be None if there's no order book or order book is empty
+    )
+    spread: Optional[float] = None
+    filtered_spread: Optional[float] = None
 
 
 class Trader:
@@ -220,8 +237,6 @@ class Trader:
                         orders.append(Order(product, best_ask, quantity))
                         buy_order_volume += quantity
                         order_depth.sell_orders[best_ask] += quantity
-                        if order_depth.sell_orders[best_ask] == 0:
-                            del order_depth.sell_orders[best_ask]
 
         if len(order_depth.buy_orders) != 0:
             best_bid = max(order_depth.buy_orders.keys())
@@ -236,8 +251,6 @@ class Trader:
                         orders.append(Order(product, best_bid, -1 * quantity))
                         sell_order_volume += quantity
                         order_depth.buy_orders[best_bid] -= quantity
-                        if order_depth.buy_orders[best_bid] == 0:
-                            del order_depth.buy_orders[best_bid]
 
         return buy_order_volume, sell_order_volume
 
@@ -306,6 +319,88 @@ class Trader:
 
         return buy_order_volume, sell_order_volume
 
+    def take_best_orders(
+        self,
+        product: Product,
+        order_depth: OrderDepth,
+        microstructure: Microstructure,
+        take_width: float,
+    ) -> List[Order]:
+        orders = []
+        if not microstructure.fair_value or not microstructure.spread:
+            return orders
+
+        # optimistically fill all the orders
+        for bid, volume in list(order_depth.buy_orders.items()):
+            if (
+                bid
+                >= microstructure.fair_value
+                + take_width * microstructure.filtered_spread
+            ):
+                orders.append(Order(product, bid, -volume))
+                del order_depth.buy_orders[bid]
+
+        for ask, volume in list(order_depth.sell_orders.items()):
+            if (
+                ask
+                <= microstructure.fair_value
+                - take_width * microstructure.filtered_spread
+            ):
+                orders.append(Order(product, ask, -volume))
+                del order_depth.sell_orders[ask]
+        return orders
+
+    def _min(self, value: Optional[int], default: int) -> int:
+        return min(value, default) if value is not None else default
+
+    def _max(self, value: Optional[int], default: int) -> int:
+        return max(value, default) if value is not None else default
+
+    def _get_microstructure(
+        self,
+        order_depth: OrderDepth,
+        forced_min_volume: int = 0,
+        forced_fair_value: Optional[float] = None,
+    ) -> Microstructure:
+        # Filter volume less than min_volume to avoid noise
+        structure = Microstructure()
+
+        for price, volume in order_depth.buy_orders.items():
+            structure.best_bid = self._max(structure.best_bid, price)
+            if abs(volume) >= forced_min_volume:
+                structure.filtered_best_bid = self._max(
+                    structure.filtered_best_bid, price
+                )
+        for price, volume in order_depth.sell_orders.items():
+            structure.best_ask = self._min(structure.best_ask, price)
+            if abs(volume) >= forced_min_volume:
+                structure.filtered_best_ask = self._min(
+                    structure.filtered_best_ask, price
+                )
+
+        if forced_fair_value:
+            structure.fair_value = forced_fair_value
+        else:
+            ask = structure.filtered_best_ask or structure.best_ask
+            bid = structure.filtered_best_bid or structure.best_bid
+            if ask is not None and bid is not None:
+                structure.fair_value = (ask + bid) / 2
+            else:
+                structure.fair_value = None
+
+        structure.spread = (
+            structure.best_ask - structure.best_bid
+            if structure.best_ask is not None and structure.best_bid is not None
+            else None
+        )
+        structure.filtered_spread = (
+            (structure.filtered_best_ask - structure.filtered_best_bid)
+            if structure.filtered_best_ask is not None
+            and structure.filtered_best_bid is not None
+            else structure.spread
+        )
+        return structure
+
     def take_orders(
         self,
         product: str,
@@ -320,19 +415,31 @@ class Trader:
         buy_order_volume = 0
         sell_order_volume = 0
 
-        buy_order_volume, sell_order_volume = self.take_best_orders(
-            product,
-            fair_value,
-            take_width,
-            orders,
+        microstructure = self._get_microstructure(
             order_depth,
-            position,
-            buy_order_volume,
-            sell_order_volume,
-            prevent_adverse,
-            adverse_volume,
+            forced_min_volume=self.params[product].get("adverse_volume"),
+            forced_fair_value=self.params[product].get("fair_value"),
         )
-        return orders, buy_order_volume, sell_order_volume
+
+        orders = self.take_best_orders(
+            product,
+            order_depth,
+            microstructure,
+            take_width,
+        )
+        return (
+            orders,
+            sum(
+                order.quantity
+                for order in orders
+                if order.symbol == product and order.quantity > 0
+            ),
+            sum(
+                order.quantity
+                for order in orders
+                if order.symbol == product and order.quantity < 0
+            ),
+        )
 
     def clear_orders(
         self,
@@ -428,28 +535,28 @@ class Trader:
             self.params[Product.RAINFOREST_RESIN]["take_width"],
             resin_position,
         )
-        # resin_clear_orders, buy_order_volume, sell_order_volume = self.clear_orders(
-        #     Product.RAINFOREST_RESIN,
-        #     state.order_depths[Product.RAINFOREST_RESIN],
-        #     self.params[Product.RAINFOREST_RESIN]["fair_value"],
-        #     self.params[Product.RAINFOREST_RESIN]["clear_width"],
-        #     resin_position,
-        #     buy_order_volume,
-        #     sell_order_volume,
-        # )
-        # resin_make_orders, _, _ = self.make_orders(
-        #     Product.RAINFOREST_RESIN,
-        #     state.order_depths[Product.RAINFOREST_RESIN],
-        #     self.params[Product.RAINFOREST_RESIN]["fair_value"],
-        #     resin_position,
-        #     buy_order_volume,
-        #     sell_order_volume,
-        #     self.params[Product.RAINFOREST_RESIN]["disregard_edge"],
-        #     self.params[Product.RAINFOREST_RESIN]["join_edge"],
-        #     self.params[Product.RAINFOREST_RESIN]["default_edge"],
-        #     True,
-        # )
-        return resin_take_orders  # + resin_clear_orders + resin_make_orders
+        resin_clear_orders, buy_order_volume, sell_order_volume = self.clear_orders(
+            Product.RAINFOREST_RESIN,
+            state.order_depths[Product.RAINFOREST_RESIN],
+            self.params[Product.RAINFOREST_RESIN]["fair_value"],
+            self.params[Product.RAINFOREST_RESIN]["clear_width"],
+            resin_position,
+            buy_order_volume,
+            sell_order_volume,
+        )
+        resin_make_orders, _, _ = self.make_orders(
+            Product.RAINFOREST_RESIN,
+            state.order_depths[Product.RAINFOREST_RESIN],
+            self.params[Product.RAINFOREST_RESIN]["fair_value"],
+            resin_position,
+            buy_order_volume,
+            sell_order_volume,
+            self.params[Product.RAINFOREST_RESIN]["disregard_edge"],
+            self.params[Product.RAINFOREST_RESIN]["join_edge"],
+            self.params[Product.RAINFOREST_RESIN]["default_edge"],
+            True,
+        )
+        return resin_take_orders + resin_clear_orders + resin_make_orders
 
     def get_fair_value(
         self, product: Product, state: TradingState, persistentData: dict
@@ -507,27 +614,27 @@ class Trader:
             self.params[Product.KELP]["take_width"],
             kelp_position,
         )
-        # kelp_clear_orders, buy_order_volume, sell_order_volume = self.clear_orders(
-        #     Product.KELP,
-        #     state.order_depths[Product.KELP],
-        #     kelp_fair_value,
-        #     self.params[Product.KELP]["clear_width"],
-        #     kelp_position,
-        #     buy_order_volume,
-        #     sell_order_volume,
-        # )
-        # kelp_make_orders, _, _ = self.make_orders(
-        #     Product.KELP,
-        #     state.order_depths[Product.KELP],
-        #     kelp_fair_value,
-        #     kelp_position,
-        #     buy_order_volume,
-        #     sell_order_volume,
-        #     self.params[Product.KELP]["disregard_edge"],
-        #     self.params[Product.KELP]["join_edge"],
-        #     self.params[Product.KELP]["default_edge"],
-        # )
-        return kelp_take_orders  # + kelp_clear_orders + kelp_make_orders
+        kelp_clear_orders, buy_order_volume, sell_order_volume = self.clear_orders(
+            Product.KELP,
+            state.order_depths[Product.KELP],
+            kelp_fair_value,
+            self.params[Product.KELP]["clear_width"],
+            kelp_position,
+            buy_order_volume,
+            sell_order_volume,
+        )
+        kelp_make_orders, _, _ = self.make_orders(
+            Product.KELP,
+            state.order_depths[Product.KELP],
+            kelp_fair_value,
+            kelp_position,
+            buy_order_volume,
+            sell_order_volume,
+            self.params[Product.KELP]["disregard_edge"],
+            self.params[Product.KELP]["join_edge"],
+            self.params[Product.KELP]["default_edge"],
+        )
+        return kelp_take_orders + kelp_clear_orders + kelp_make_orders
 
     def get_squid_ink_orders(
         self, state: TradingState, persistentData: dict
@@ -546,29 +653,27 @@ class Trader:
             self.params[Product.SQUID_INK]["take_width"],
             squid_ink_position,
         )
-        # squid_ink_clear_orders, buy_order_volume, sell_order_volume = self.clear_orders(
-        #     Product.SQUID_INK,
-        #     state.order_depths[Product.SQUID_INK],
-        #     squid_ink_fair_value,
-        #     self.params[Product.SQUID_INK]["clear_width"],
-        #     squid_ink_position,
-        #     buy_order_volume,
-        #     sell_order_volume,
-        # )
-        # squid_ink_make_orders, _, _ = self.make_orders(
-        #     Product.SQUID_INK,
-        #     state.order_depths[Product.SQUID_INK],
-        #     squid_ink_fair_value,
-        #     squid_ink_position,
-        #     buy_order_volume,
-        #     sell_order_volume,
-        #     self.params[Product.SQUID_INK]["disregard_edge"],
-        #     self.params[Product.SQUID_INK]["join_edge"],
-        #     self.params[Product.SQUID_INK]["default_edge"],
-        # )
-        return (
-            squid_ink_take_orders  #  + squid_ink_clear_orders + squid_ink_make_orders
+        squid_ink_clear_orders, buy_order_volume, sell_order_volume = self.clear_orders(
+            Product.SQUID_INK,
+            state.order_depths[Product.SQUID_INK],
+            squid_ink_fair_value,
+            self.params[Product.SQUID_INK]["clear_width"],
+            squid_ink_position,
+            buy_order_volume,
+            sell_order_volume,
         )
+        squid_ink_make_orders, _, _ = self.make_orders(
+            Product.SQUID_INK,
+            state.order_depths[Product.SQUID_INK],
+            squid_ink_fair_value,
+            squid_ink_position,
+            buy_order_volume,
+            sell_order_volume,
+            self.params[Product.SQUID_INK]["disregard_edge"],
+            self.params[Product.SQUID_INK]["join_edge"],
+            self.params[Product.SQUID_INK]["default_edge"],
+        )
+        return squid_ink_take_orders + squid_ink_clear_orders + squid_ink_make_orders
 
     def run(self, state: TradingState):
         persistentData = {}
@@ -578,7 +683,7 @@ class Trader:
         result = {
             Product.RAINFOREST_RESIN: self.get_resin_orders(state),
             Product.KELP: self.get_kelp_orders(state, persistentData),
-            # Product.SQUID_INK: self.get_squid_ink_orders(state, persistentData),
+            Product.SQUID_INK: self.get_squid_ink_orders(state, persistentData),
         }
 
         conversions = 1

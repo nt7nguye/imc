@@ -1,3 +1,4 @@
+from copy import deepcopy
 from dataclasses import dataclass
 import pdb
 from re import I
@@ -173,7 +174,7 @@ class Trader:
             params = {
                 Product.RAINFOREST_RESIN: {
                     "forced_fair_value": 10000,
-                    "take_width": 0,  # its good to take 10000
+                    "take_width": 0.5,  # its good to take 10000
                     "min_volume": 10,
                 },
                 Product.KELP: {
@@ -264,29 +265,35 @@ class Trader:
             return orders
 
         # optimistically fill all the orders
-        for bid, volume in order_depth.buy_orders.items():
+        for bid, volume in list(order_depth.buy_orders.items()):
             if (
                 bid
                 >= microstructure.fair_value
                 + take_width * microstructure.filtered_spread
             ):
                 orders.append(Order(product, bid, -volume))
+                del order_depth.buy_orders[bid]
 
-        for ask, volume in order_depth.sell_orders.items():
+        for ask, volume in list(order_depth.sell_orders.items()):
             if (
                 ask
                 <= microstructure.fair_value
                 - take_width * microstructure.filtered_spread
             ):
                 orders.append(Order(product, ask, -volume))
+                del order_depth.sell_orders[ask]
         return orders
+    
+
+
 
     def balance_limits(
         self,
         product: Product,
         position: int,
         orders: List[Order],
-        order_depth: OrderDepth,
+        min_bid: int,
+        max_ask: int,
         position_limit: int = 50,
     ) -> List[Order]:
         final_position = position + sum(order.quantity for order in orders)
@@ -297,7 +304,7 @@ class Trader:
             balance_orders.append(
                 Order(
                     product,
-                    min(order_depth.buy_orders.keys()) - 1,
+                    min_bid,
                     -final_position,
                 )
             )
@@ -306,7 +313,7 @@ class Trader:
             balance_orders.append(
                 Order(
                     product,
-                    max(order_depth.sell_orders.keys()) + 1,
+                    max_ask,
                     final_position,
                 )
             )
@@ -318,7 +325,7 @@ class Trader:
         params = self.params[product]
 
         # Base calcs
-        order_depth = state.order_depths.get(product, OrderDepth())
+        order_depth = deepcopy(state.order_depths.get(product, OrderDepth()))
         position = state.position.get(product, 0)
         microstructure = self._get_microstructure(
             order_depth,
@@ -326,12 +333,16 @@ class Trader:
             forced_fair_value=params.get("forced_fair_value"),
         )
 
+        # Have to keep a reference of min_bid, max_ask because they might get cleared
+        min_bid = min(order_depth.buy_orders.keys())
+        max_ask = max(order_depth.sell_orders.keys())
+
         # Take orders
         take_orders = self.take_best_orders(product, order_depth, microstructure, 0)
 
         return [
             *take_orders,
-            *self.balance_limits(product, position, take_orders, order_depth),
+            *self.balance_limits(product, position, take_orders, min_bid, max_ask),
         ]
 
     def get_kelp_orders(self, state: TradingState) -> List[Order]:
@@ -340,19 +351,22 @@ class Trader:
         params = self.params[product]
 
         # Base calcs
-        order_depth = state.order_depths.get(product, OrderDepth())
+        order_depth = deepcopy(state.order_depths.get(product, OrderDepth()))
         position = state.position.get(product, 0)
         microstructure = self._get_microstructure(
             order_depth,
             forced_min_volume=params.get("min_volume"),
         )
+        # Have to keep a reference of min_bid, max_ask because they might get cleared
+        min_bid = min(order_depth.buy_orders.keys())
+        max_ask = max(order_depth.sell_orders.keys())
 
         # Take orders
         take_orders = self.take_best_orders(product, order_depth, microstructure, 0)
 
         return [
             *take_orders,
-            *self.balance_limits(product, position, take_orders, order_depth),
+            *self.balance_limits(product, position, take_orders, min_bid, max_ask),
         ]
 
     def get_squid_ink_orders(self, state: TradingState) -> List[Order]:
@@ -361,19 +375,23 @@ class Trader:
         params = self.params[product]
 
         # Base calcs
-        order_depth = state.order_depths.get(product, OrderDepth())
+        order_depth = deepcopy(state.order_depths.get(product, OrderDepth()))
         position = state.position.get(product, 0)
         microstructure = self._get_microstructure(
             order_depth,
             forced_min_volume=params.get("min_volume"),
         )
 
+        # Have to keep a reference of min_bid, max_ask because they might get cleared
+        min_bid = min(order_depth.buy_orders.keys())
+        max_ask = max(order_depth.sell_orders.keys())
+
         # Take orders
         take_orders = self.take_best_orders(product, order_depth, microstructure, 0)
 
         return [
             *take_orders,
-            *self.balance_limits(product, position, take_orders, order_depth),
+            *self.balance_limits(product, position, take_orders, min_bid, max_ask),
         ]
 
     def run(self, state: TradingState):
